@@ -1,0 +1,15 @@
+plugins {
+    id 'application'
+}
+
+repositories {
+    mavenCentral()
+}
+
+application {
+    mainClass = 'com.miniHls.Server'
+}
+
+test {
+    useJUnitPlatform()
+}
