@@ -11,6 +11,12 @@ server/build/
 server/.gradle/
 server/segments/
 
+# jdtls (Eclipse JDT LS) project metadata
+server/.classpath
+server/.project
+server/.settings/
+server/bin/
+
 # generated stream output
 segments/
 *.ts

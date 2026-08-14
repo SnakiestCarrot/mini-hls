@@ -1,4 +1,5 @@
 extern "C" {
+#include <libavcodec/packet.h>
 #include <libavformat/avformat.h>
 }
 
@@ -27,7 +28,8 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "failed to open input: %s\n", input_path.c_str());
         return 1;
     }
-
+    
+    
     if (avformat_find_stream_info(input_ctx, nullptr) < 0) {
         std::fprintf(stderr, "failed to read stream info\n");
         avformat_close_input(&input_ctx);
@@ -37,6 +39,21 @@ int main(int argc, char** argv) {
     std::printf("opened %s, %u streams\n", input_path.c_str(), input_ctx->nb_streams);
 
     // TODO: segment loop (see plan above).
+    
+    AVPacket* pkt = av_packet_alloc();   // allocate once, outside the loop
+
+    while (av_read_frame(input_ctx, pkt) >= 0) {
+        // pkt now holds one demuxed packet — compressed data,
+        // pkt->stream_index tells you which stream (video/audio/etc)
+        // pkt->pts, pkt->flags (check AV_PKT_FLAG_KEY here), etc.
+
+        // ... do your remux/segment-cut logic with pkt ...
+
+        av_packet_unref(pkt);   // release pkt's internal buffer, ready for reuse
+    }
+
+    av_packet_free(&pkt);
+
 
     avformat_close_input(&input_ctx);
     return 0;
