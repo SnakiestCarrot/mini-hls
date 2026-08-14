@@ -15,3 +15,4 @@ pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET
 
 add_executable(segmenter src/main.cpp)
 target_link_libraries(segmenter PRIVATE PkgConfig::FFMPEG)
+target_compile_definitions(segmenter PRIVATE __STDC_CONSTANT_MACROS)
