@@ -9,8 +9,9 @@ serving layer.
   cuts it into fixed-duration `.ts` segments, writes a rolling `playlist.m3u8`
   (HLS manifest) as segments land.
 - **server/** (Java, Gradle) — plain `com.sun.net.httpserver` HTTP server
-  that serves the manifest + segments, simulating a CDN edge. Stretch goal:
-  fake a second bitrate rendition and serve a multi-variant playlist.
+  that serves the manifest + segments, simulating a CDN edge. Sends
+  `Cache-Control: no-cache` on the playlist and long-lived immutable caching
+  on segments.
 
 ## Build
 
