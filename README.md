@@ -5,9 +5,9 @@ serving layer.
 
 ## Pieces
 
-- **segmenter/** (C++, CMake) — reads a video file or v4l2 device via
-  libavformat/libavcodec, cuts it into fixed-duration `.ts` segments, writes
-  a rolling `playlist.m3u8` (HLS manifest) as segments land.
+- **segmenter/** (C++, CMake) — reads a video file via libavformat/libavcodec,
+  cuts it into fixed-duration `.ts` segments, writes a rolling `playlist.m3u8`
+  (HLS manifest) as segments land.
 - **server/** (Java, Gradle) — plain `com.sun.net.httpserver` HTTP server
   that serves the manifest + segments, simulating a CDN edge. Stretch goal:
   fake a second bitrate rendition and serve a multi-variant playlist.
@@ -33,11 +33,11 @@ cd server && ./gradlew compileJava
 
 ## Run
 
-Segmenter takes a video file or v4l2 device and writes `.ts` segments plus
-`playlist.m3u8` into `segmenter/`:
+Segmenter takes a video file and writes `.ts` segments plus `playlist.m3u8`
+into `segmenter/`:
 
 ```
-./segmenter/build/segmenter <path-to-video-or-/dev/videoN>
+./segmenter/build/segmenter <path-to-video>
 ```
 
 It paces itself to the source's own timestamps (not an instant file rip), so
