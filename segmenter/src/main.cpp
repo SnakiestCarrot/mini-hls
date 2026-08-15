@@ -18,6 +18,7 @@ extern "C" {
 #include <fstream>
 #include <chrono>
 #include <thread>
+#include <filesystem>
 
 struct SegmentInfo {
     std::string filename;
@@ -70,6 +71,19 @@ void end_segment(AVFormatContext* out_ctx) {
     avformat_free_context(out_ctx);
 }
 
+void clean_stale_output(const std::filesystem::path& dir) {
+    for (const auto& entry : std::filesystem::directory_iterator(dir)) {
+        if (!entry.is_regular_file()) continue;
+        const std::string name = entry.path().filename().string();
+        bool is_stale_segment = name.rfind("segment", 0) == 0 && name.size() > 3
+            && name.compare(name.size() - 3, 3, ".ts") == 0;
+        bool is_stale_playlist = name == "playlist.m3u8" || name == "playlist.m3u8.tmp";
+        if (is_stale_segment || is_stale_playlist) {
+            std::filesystem::remove(entry.path());
+        }
+    }
+}
+
 // Segmenter entry point.
 //
 // Plan:
@@ -109,6 +123,8 @@ int main(int argc, char** argv) {
                break;
         }
     }
+
+    clean_stale_output(std::filesystem::current_path());
 
     std::deque<SegmentInfo> segments;
 
