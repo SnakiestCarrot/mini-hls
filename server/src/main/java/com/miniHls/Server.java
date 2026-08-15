@@ -12,7 +12,7 @@ import java.nio.file.Path;
 public class Server {
 
     private static final int PORT = 8080;
-    private static final Path SEGMENTS_DIR = Path.of("segments");
+    private static final Path SEGMENTS_DIR = Path.of("../segmenter");
 
     public static void main(String[] args) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(PORT), 0);

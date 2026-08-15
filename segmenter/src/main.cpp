@@ -14,28 +14,31 @@ extern "C" {
 #include <cstdint>
 #include <cmath>
 #include <string>
-#include <vector>
+#include <deque>
 #include <fstream>
+#include <chrono>
+#include <thread>
 
 struct SegmentInfo {
     std::string filename;
     double duration;
 };
 
-void write_playlist(const std::vector<SegmentInfo>& segments, double max_segment_duration) {
+void write_playlist(const std::deque<SegmentInfo>& segments, double max_segment_duration, int64_t first_segment_index, bool is_end) {
     std::string playlist_str = "";
     int64_t segment_duration = static_cast<int>(std::ceil(max_segment_duration));
     
     playlist_str.append(
-        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:" + std::to_string(segment_duration) +"\n#EXT-X-MEDIA-SEQUENCE:" + std::to_string(0) + "\n"
+        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:" + std::to_string(segment_duration) +"\n#EXT-X-MEDIA-SEQUENCE:" + std::to_string(first_segment_index) + "\n"
     );
 
-    for (int i = 0; i < segments.size(); i++) {
+    for (size_t i = 0; i < segments.size(); i++) {
         SegmentInfo s = segments.at(i);
         playlist_str.append("#EXTINF:" + std::to_string(s.duration) + "\n" + s.filename + "\n");
     }
-    playlist_str.append("#EXT-X-ENDLIST\n");
-
+    if (is_end) {
+        playlist_str.append("#EXT-X-ENDLIST\n");
+    }
     std::ofstream ofs("playlist.m3u8.tmp");
     ofs << playlist_str;
     ofs.close();
@@ -107,7 +110,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    std::vector<SegmentInfo> segments;
+    std::deque<SegmentInfo> segments;
 
     AVPacket* pkt = av_packet_alloc();   // allocate once, outside the loop
     
@@ -119,16 +122,35 @@ int main(int argc, char** argv) {
     AVFormatContext* out_ctx = start_segment(input_ctx, segment_name);
 
     double target_segment_duration = 6.0;
+    int64_t target_number_segments = 3;
+    int64_t cur_first_segment_index = 0;
     std::int64_t last_video_pts = 0;
     std::int64_t last_video_pkt_duration = 0;
     double max_duration = 0.0;
-    while (av_read_frame(input_ctx, pkt) >= 0) { 
+    bool is_capture_ended = false;
+
+    auto capture_start_time = std::chrono::steady_clock::now();
+    bool first_video_pkt_seen = false;
+    std::int64_t first_video_pts = 0;
+
+    while (av_read_frame(input_ctx, pkt) >= 0) {
         bool is_video_pkt = pkt->stream_index == video_stream_index;
         bool is_keyframe_pkt = pkt->flags & AV_PKT_FLAG_KEY;
 
         if (is_video_pkt) {
             last_video_pts = pkt->pts;
             last_video_pkt_duration = pkt->duration;
+
+            if (!first_video_pkt_seen) {
+                first_video_pts = pkt->pts;
+                first_video_pkt_seen = true;
+            }
+
+            double stream_elapsed = (pkt->pts - first_video_pts) * av_q2d(input_ctx->streams[video_stream_index]->time_base);
+            double wall_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - capture_start_time).count();
+            if (stream_elapsed > wall_elapsed) {
+                std::this_thread::sleep_for(std::chrono::duration<double>(stream_elapsed - wall_elapsed));
+            }
         }
 
         if (is_video_pkt && is_keyframe_pkt) {
@@ -136,9 +158,16 @@ int main(int argc, char** argv) {
             if (elapsed_time >= target_segment_duration) {
                 max_duration = std::max(max_duration, elapsed_time);
                 end_segment(out_ctx);
+                
                 SegmentInfo cur_seg = SegmentInfo(segment_name, elapsed_time);
                 segments.push_back(cur_seg);
-                write_playlist(segments, max_duration);
+                
+                if (segments.size() > target_number_segments) {
+                    segments.pop_front();
+                    cur_first_segment_index++;
+                }
+                
+                write_playlist(segments, max_duration, cur_first_segment_index, is_capture_ended);
                 segment_index++;
                 segment_name = "segment" + std::to_string(segment_index) + ".ts";
 
@@ -159,12 +188,20 @@ int main(int argc, char** argv) {
 
         av_packet_unref(pkt);   // release pkt's internal buffer, ready for reuse
     }
+    is_capture_ended = true;
+
     double last_segment_duration = (last_video_pts + last_video_pkt_duration - cur_segment_start_pts) * av_q2d(input_ctx->streams[video_stream_index]->time_base);
     SegmentInfo cur_seg = SegmentInfo(segment_name, last_segment_duration);
     max_duration = std::max(max_duration, last_segment_duration);
     end_segment(out_ctx);
     segments.push_back(cur_seg);
-    write_playlist(segments, max_duration);
+ 
+    if (segments.size() > target_number_segments) {
+        segments.pop_front();
+        cur_first_segment_index++;
+    }
+
+    write_playlist(segments, max_duration, cur_first_segment_index, is_capture_ended);
     
     av_packet_free(&pkt);
 
