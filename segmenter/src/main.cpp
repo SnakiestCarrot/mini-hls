@@ -94,12 +94,32 @@ void clean_stale_output(const std::filesystem::path& dir) {
 //   4. After each segment closes, rewrite playlist.m3u8 with the new
 //      segment listed (EXT-X-TARGETDURATION, EXTINF, EXT-X-MEDIA-SEQUENCE).
 int main(int argc, char** argv) {
-    if (argc < 2) {
-        std::fprintf(stderr, "usage: %s <input>\n", argv[0]);
-        return 1;
+    std::string input_path;
+    double target_segment_duration = 6.0;
+    int64_t target_number_segments = 3;
+
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+        if (arg == "--segment-duration" && i + 1 < argc) {
+            target_segment_duration = std::stod(argv[++i]);
+        } else if (arg == "--window-size" && i + 1 < argc) {
+            target_number_segments = std::stoll(argv[++i]);
+        } else if (input_path.empty()) {
+            input_path = arg;
+        } else {
+            std::fprintf(stderr, "unrecognized argument: %s\n", arg.c_str());
+            return 1;
+        }
     }
 
-    const std::string input_path = argv[1];
+    if (input_path.empty()) {
+        std::fprintf(stderr,
+            "usage: %s <input> [--segment-duration <seconds>] [--window-size <count>]\n"
+            "  --segment-duration  target length per segment in seconds (default: 6.0)\n"
+            "  --window-size       number of segments kept in the live playlist (default: 3)\n",
+            argv[0]);
+        return 1;
+    }
 
     AVFormatContext* input_ctx = nullptr;
     if (avformat_open_input(&input_ctx, input_path.c_str(), nullptr, nullptr) < 0) {
@@ -137,8 +157,6 @@ int main(int argc, char** argv) {
 
     AVFormatContext* out_ctx = start_segment(input_ctx, segment_name);
 
-    double target_segment_duration = 6.0;
-    int64_t target_number_segments = 3;
     int64_t cur_first_segment_index = 0;
     std::int64_t last_video_pts = 0;
     std::int64_t last_video_pkt_duration = 0;

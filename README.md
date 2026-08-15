@@ -37,15 +37,18 @@ Segmenter takes a video file and writes `.ts` segments plus `playlist.m3u8`
 into `segmenter/`:
 
 ```
-./segmenter/build/segmenter <path-to-video>
+./segmenter/build/segmenter <path-to-video> [--segment-duration <seconds>] [--window-size <count>]
 ```
+
+- `--segment-duration` — target length per segment in seconds (default: `6.0`)
+- `--window-size` — number of segments kept in the live playlist (default: `3`)
 
 It paces itself to the source's own timestamps (not an instant file rip), so
 a plain file behaves like a live source — segments land roughly one every
-`target_segment_duration` (6s by default). The playlist keeps only the last
-`target_number_segments` (3 by default) and omits `EXT-X-ENDLIST` until the
-source actually ends, matching real live-HLS behavior. Both are constants
-in `segmenter/src/main.cpp`, not CLI flags yet.
+`--segment-duration`. The playlist keeps only the last `--window-size`
+segments and omits `EXT-X-ENDLIST` until the source actually ends, matching
+real live-HLS behavior. Any stale `segment*.ts`/`playlist.m3u8` left over
+from a previous run in the same directory are wiped on startup.
 
 Server serves whatever's currently in `segmenter/` over HTTP. Run it from
 `server/` (it resolves segments relative to `../segmenter`):
