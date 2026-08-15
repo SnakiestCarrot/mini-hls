@@ -32,6 +32,7 @@ public class Server {
         }
 
         exchange.getResponseHeaders().set("Content-Type", contentType(file));
+        exchange.getResponseHeaders().set("Cache-Control", cacheControl(file));
         byte[] body = Files.readAllBytes(file);
         exchange.sendResponseHeaders(200, body.length);
         try (OutputStream os = exchange.getResponseBody()) {
@@ -44,5 +45,12 @@ public class Server {
         if (name.endsWith(".m3u8")) return "application/vnd.apple.mpegurl";
         if (name.endsWith(".ts")) return "video/mp2t";
         return "application/octet-stream";
+    }
+
+    private static String cacheControl(Path file) {
+        String name = file.toString();
+        if (name.endsWith(".m3u8")) return "no-cache";
+        if (name.endsWith(".ts")) return "public, max-age=31536000, immutable";
+        return "no-cache";
     }
 }
