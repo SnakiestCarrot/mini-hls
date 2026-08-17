@@ -62,8 +62,17 @@ AVFormatContext* start_segment(AVFormatContext* input_ctx, std::string segment_n
         out_stream->time_base = in_stream->time_base;
     }
 
-    avio_open(&out_ctx->pb, segment_name.c_str(), AVIO_FLAG_WRITE);
-    avformat_write_header(out_ctx, nullptr);
+    if (avio_open(&out_ctx->pb, segment_name.c_str(), AVIO_FLAG_WRITE) < 0) {
+        std::fprintf(stderr, "Failed to write segment: %s.\n", segment_name.c_str());
+        avformat_free_context(out_ctx);
+        return nullptr; 
+    }
+
+    if (avformat_write_header(out_ctx, nullptr) < 0) {
+        std::fprintf(stderr, "Failed to write header.\n");    
+        avformat_free_context(out_ctx);
+        return nullptr;
+    }
     return out_ctx;
 }
 
@@ -161,6 +170,10 @@ int main(int argc, char** argv) {
     bool is_capture_ended = false;
     std::string segment_name = "segment" + std::to_string(segment_index) + ".ts";
     AVFormatContext* out_ctx = start_segment(input_ctx, segment_name);
+    if (!out_ctx) {
+        avformat_close_input(&input_ctx);
+        return 1;
+    }
 
     auto demux_fn = [&]() {
         AVPacket* pkt = av_packet_alloc(); 
@@ -229,7 +242,13 @@ int main(int argc, char** argv) {
 
                 cur_segment_start_pts = pkt->pts;
 
-                out_ctx = start_segment(input_ctx, segment_name); 
+                out_ctx = start_segment(input_ctx, segment_name);
+                if (!out_ctx) {
+                    queue.close();
+                    demux_thread.join();
+                    avformat_close_input(&input_ctx);
+                    return 1;
+                }
             }
         }
 
