@@ -88,13 +88,14 @@ void clean_stale_output(const std::filesystem::path& dir) {
 
 // Segmenter entry point.
 //
-// Plan:
-//   1. Open input (file path or v4l2 device) via avformat_open_input.
-//   2. Open an output AVFormatContext per segment using the "mpegts" muxer.
-//   3. Demux input packets, remux into the current segment, cutting to a
-//      new segment file every N seconds (keyframe-aligned).
-//   4. After each segment closes, rewrite playlist.m3u8 with the new
-//      segment listed (EXT-X-TARGETDURATION, EXTINF, EXT-X-MEDIA-SEQUENCE).
+// Runs two threads connected by a bounded PacketQueue:
+//   - demux thread: av_read_frame off the input, paced to the source's own
+//     timestamps, clones each packet, and pushes it onto the queue.
+//   - main thread (consumer): pops packets, remuxes into the current segment,
+//     cutting to a new segment file every N seconds (keyframe-aligned), and
+//     rewrites playlist.m3u8 after each cut (EXT-X-TARGETDURATION, EXTINF,
+//     EXT-X-MEDIA-SEQUENCE) reflecting the sliding window.
+// The queue bound gives backpressure if the consumer ever falls behind.
 int main(int argc, char** argv) {
     std::string input_path;
     double target_segment_duration = 6.0;
@@ -186,7 +187,12 @@ int main(int argc, char** argv) {
                     std::this_thread::sleep_for(std::chrono::duration<double>(stream_elapsed - wall_elapsed));
                 }
             }
-            queue.push(AVPacketPtr(av_packet_clone(pkt)));
+            AVPacket* cloned = av_packet_clone(pkt);
+            if (!cloned) {
+                std::fprintf(stderr, "av_packet_clone failed, stopping capture\n");
+                break;
+            }
+            queue.push(AVPacketPtr(cloned));
             av_packet_unref(pkt);
         }
         av_packet_free(&pkt);
