@@ -20,6 +20,8 @@ extern "C" {
 #include <thread>
 #include <filesystem>
 
+#include "packet_queue.hpp"
+
 struct SegmentInfo {
     std::string filename;
     double duration;
@@ -145,47 +147,61 @@ int main(int argc, char** argv) {
     }
 
     clean_stale_output(std::filesystem::current_path());
-
+    int64_t queue_len = 8;
+    PacketQueue queue = PacketQueue(queue_len);
     std::deque<SegmentInfo> segments;
 
-    AVPacket* pkt = av_packet_alloc();   // allocate once, outside the loop
-    
     std::int64_t segment_index = 0;
     std::int64_t cur_segment_start_pts = 0;
-
-    std::string segment_name = "segment" + std::to_string(segment_index) + ".ts";
-
-    AVFormatContext* out_ctx = start_segment(input_ctx, segment_name);
-
     int64_t cur_first_segment_index = 0;
     std::int64_t last_video_pts = 0;
     std::int64_t last_video_pkt_duration = 0;
     double max_duration = 0.0;
     bool is_capture_ended = false;
+    std::string segment_name = "segment" + std::to_string(segment_index) + ".ts";
+    AVFormatContext* out_ctx = start_segment(input_ctx, segment_name);
 
-    auto capture_start_time = std::chrono::steady_clock::now();
-    bool first_video_pkt_seen = false;
-    std::int64_t first_video_pts = 0;
+    auto demux_fn = [&]() {
+        AVPacket* pkt = av_packet_alloc(); 
+        auto capture_start_time = std::chrono::steady_clock::now();
+        bool first_video_pkt_seen = false;
+        std::int64_t first_video_pts = 0;
+         
+        while (av_read_frame(input_ctx, pkt) >= 0) {
+            bool is_video_pkt = pkt->stream_index == video_stream_index;
+            bool is_keyframe_pkt = pkt->flags & AV_PKT_FLAG_KEY;
 
-    while (av_read_frame(input_ctx, pkt) >= 0) {
+            if (is_video_pkt) {
+                last_video_pts = pkt->pts;
+                last_video_pkt_duration = pkt->duration;
+
+                if (!first_video_pkt_seen) {
+                    first_video_pts = pkt->pts;
+                    first_video_pkt_seen = true;
+                }
+
+                double stream_elapsed = (pkt->pts - first_video_pts) * av_q2d(input_ctx->streams[video_stream_index]->time_base);
+                double wall_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - capture_start_time).count();
+                if (stream_elapsed > wall_elapsed) {
+                    std::this_thread::sleep_for(std::chrono::duration<double>(stream_elapsed - wall_elapsed));
+                }
+            }
+            queue.push(AVPacketPtr(av_packet_clone(pkt)));
+            av_packet_unref(pkt);
+        }
+        av_packet_free(&pkt);
+        queue.close();
+
+    };
+
+    std::thread demux_thread(demux_fn);
+    
+    while(true) {
+        AVPacketPtr pkt = queue.pop();
+        if (!pkt) break;
+
         bool is_video_pkt = pkt->stream_index == video_stream_index;
         bool is_keyframe_pkt = pkt->flags & AV_PKT_FLAG_KEY;
-
-        if (is_video_pkt) {
-            last_video_pts = pkt->pts;
-            last_video_pkt_duration = pkt->duration;
-
-            if (!first_video_pkt_seen) {
-                first_video_pts = pkt->pts;
-                first_video_pkt_seen = true;
-            }
-
-            double stream_elapsed = (pkt->pts - first_video_pts) * av_q2d(input_ctx->streams[video_stream_index]->time_base);
-            double wall_elapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - capture_start_time).count();
-            if (stream_elapsed > wall_elapsed) {
-                std::this_thread::sleep_for(std::chrono::duration<double>(stream_elapsed - wall_elapsed));
-            }
-        }
 
         if (is_video_pkt && is_keyframe_pkt) {
             double elapsed_time = (pkt->pts - cur_segment_start_pts) * av_q2d(input_ctx->streams[video_stream_index]->time_base);
@@ -211,17 +227,14 @@ int main(int argc, char** argv) {
             }
         }
 
-        av_packet_rescale_ts(pkt,
+        av_packet_rescale_ts(pkt.get(),
             input_ctx->streams[pkt->stream_index]->time_base,
             out_ctx->streams[pkt->stream_index]->time_base);
 
-        av_interleaved_write_frame(out_ctx, pkt);
+        av_interleaved_write_frame(out_ctx, pkt.get());
 
-        
-        
-
-        av_packet_unref(pkt);   // release pkt's internal buffer, ready for reuse
     }
+    demux_thread.join();
     is_capture_ended = true;
 
     double last_segment_duration = (last_video_pts + last_video_pkt_duration - cur_segment_start_pts) * av_q2d(input_ctx->streams[video_stream_index]->time_base);
@@ -236,8 +249,6 @@ int main(int argc, char** argv) {
     }
 
     write_playlist(segments, max_duration, cur_first_segment_index, is_capture_ended);
-    
-    av_packet_free(&pkt);
 
     avformat_close_input(&input_ctx);
     return 0;
